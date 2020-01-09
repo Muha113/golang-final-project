@@ -16,8 +16,6 @@ type Config struct {
 
 func NewConfig(cfgPath string) (*Config, error) {
 	cfgJSON, err := ioutil.ReadFile(cfgPath)
-	// fmt.Println(cfgJSON)
-	// fmt.Println(cfgPath)
 	cfg := Config{}
 	err = json.Unmarshal(cfgJSON, &cfg)
 	return &cfg, err

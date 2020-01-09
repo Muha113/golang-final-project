@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 
@@ -8,15 +9,13 @@ import (
 )
 
 func main() {
-	//cfgPath := "golang-final-project/config/serverconfig.json"
-	// config, err := server.NewConfig(cfgPath)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	var cfgPath string
+	flag.StringVar(&cfgPath, "cfgPath", "config/serverconfig.json", "cfg path")
+	flag.Parse()
 
-	config := &server.Config{
-		Host: "localhost",
-		Port: "8080",
+	config, err := server.NewConfig(cfgPath)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	srv := server.NewServer(config)
