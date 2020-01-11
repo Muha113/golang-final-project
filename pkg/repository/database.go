@@ -62,12 +62,14 @@ func (u *UsersRepositoryInMemory) UpdateUser(user model.User) error {
 		return err
 	}
 	collection := u.db.Collection("Users")
-	if u.isExist(user) {
+	if !u.isExist(user) {
 		return fmt.Errorf("Error: %s", "user already exists")
 	}
 	u.RUnlock()
 	u.Lock()
-	_, err = collection.UpdateOne(context.TODO(), bson.M{"id": user.ID}, user)
+	filter := bson.D{{Key: "useremail", Value: user.UserEmail}}
+	update := bson.D{{Key: "$set", Value: bson.D{{Key: "userfollowing", Value: user.UserFollowing}, {Key: "usertweets", Value: user.UserTweets}}}}
+	_, err = collection.UpdateOne(context.TODO(), filter, update)
 	if err != nil {
 		return err
 	}
@@ -75,20 +77,24 @@ func (u *UsersRepositoryInMemory) UpdateUser(user model.User) error {
 	return nil
 }
 
-// func (u *UsersRepositoryInMemory) getByID(id uint) (model.User, error) {
-// 	collection := u.db.Collection("Users")
-// 	filter := bson.D{{Key: "id", Value: id}}
-// 	var res model.User
-// 	err := collection.FindOne(context.TODO(), filter).Decode(&res)
-// 	if err != nil {
-// 		return model.User{}, err
-// 	}
-// 	return res, nil
-// }
+func (u *UsersRepositoryInMemory) GetUserByUserName(userName string) (model.User, error) {
+	u.RLock()
+	defer u.RUnlock()
+	collection := u.db.Collection("Users")
+	filter := bson.D{{Key: "username", Value: userName}}
+	var res model.User
+	err := collection.FindOne(context.TODO(), filter).Decode(&res)
+	if err != nil {
+		return model.User{}, err
+	}
+	return res, nil
+}
 
 func (u *UsersRepositoryInMemory) GetUserByEmail(email string) (model.User, error) {
+	u.RLock()
+	defer u.RUnlock()
 	collection := u.db.Collection("Users")
-	filter := bson.D{{Key: "email", Value: email}}
+	filter := bson.D{{Key: "useremail", Value: email}}
 	var res model.User
 	err := collection.FindOne(context.TODO(), filter).Decode(&res)
 	if err != nil {
@@ -99,7 +105,7 @@ func (u *UsersRepositoryInMemory) GetUserByEmail(email string) (model.User, erro
 
 func (u *UsersRepositoryInMemory) isExist(user model.User) bool {
 	collection := u.db.Collection("Users")
-	filter := bson.D{{Key: "email", Value: user.UserEmail}}
+	filter := bson.D{{Key: "useremail", Value: user.UserEmail}}
 	var res model.User
 	err := collection.FindOne(context.TODO(), filter).Decode(&res)
 	if err != nil {
@@ -126,7 +132,7 @@ func (u *UsersRepositoryInMemory) checkUserModelForExistence(user model.User) er
 	if err == nil {
 		return fmt.Errorf("Error: %s", "duplicate username")
 	}
-	filter = bson.D{{Key: "email", Value: user.UserEmail}}
+	filter = bson.D{{Key: "useremail", Value: user.UserEmail}}
 	err = collection.FindOne(context.TODO(), filter).Decode(&res)
 	if err == nil {
 		return fmt.Errorf("Error %s", "duplicate email")

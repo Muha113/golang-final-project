@@ -4,7 +4,7 @@ import "time"
 
 type Tweet struct {
 	ID           uint      `json:"id"`
-	UserID       uint      `json:"userId"`
+	UserName     string    `json:"userId"`
 	TweetMessage string    `jsong:"message"`
 	DateTime     time.Time `json:"datetime"`
 }

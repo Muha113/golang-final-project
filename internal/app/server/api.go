@@ -73,6 +73,8 @@ func (s *Server) handleRegister() http.HandlerFunc {
 		err = s.repo.SaveUser(user)
 		if err != nil {
 			s.logger.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		json.NewEncoder(w).Encode(user)
 	}
@@ -83,16 +85,16 @@ func (s *Server) handleLogin() http.HandlerFunc {
 		var reqUser model.User
 		err := json.NewDecoder(r.Body).Decode(&reqUser)
 		if err != nil {
+			s.logger.Error(err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-
 		user, err := s.repo.GetUserByEmail(reqUser.UserEmail)
 		if err != nil || user.UserPasswordHash != hashPasswd(reqUser.UserPasswordHash) {
+			s.logger.Error(err)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-
 		expTime := time.Now().Add(5 * time.Minute)
 		claims := &model.JWTClaims{
 			UserEmail: user.UserEmail,
@@ -100,14 +102,13 @@ func (s *Server) handleLogin() http.HandlerFunc {
 				ExpiresAt: expTime.Unix(),
 			},
 		}
-
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		tokenString, err := token.SignedString(s.config.Jwt)
+		tokenString, err := token.SignedString([]byte(s.config.Jwt))
 		if err != nil {
+			s.logger.Error(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-
 		http.SetCookie(w, &http.Cookie{
 			Name:    "token",
 			Value:   tokenString,
@@ -137,8 +138,16 @@ func (s *Server) handleSubscribe() http.HandlerFunc {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		for _, v := range user.UserFollowing {
+			if v == reqUser.UserName {
+				s.logger.Error("Error: Duplicate following username")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
 		tmp := user.UserFollowing
 		user.UserFollowing = append(user.UserFollowing, reqUser.UserName)
+		fmt.Println("Following: ", user.UserFollowing)
 		err = s.repo.UpdateUser(user)
 		if err != nil {
 			s.logger.Error(err)
@@ -149,15 +158,70 @@ func (s *Server) handleSubscribe() http.HandlerFunc {
 	}
 }
 
+//TODO
 func (s *Server) handleTweetsPost() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-
+		claims, status, err := s.isAuthorized(r)
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(status)
+			return
+		}
+		var tweet model.Tweet
+		err = json.NewDecoder(r.Body).Decode(&tweet)
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		user, err := s.repo.GetUserByEmail(claims.UserEmail)
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		tweet.DateTime = time.Now()
+		tweet.ID = uint(len(user.UserTweets)) + 1
+		tweet.UserName = user.UserName
+		tmp := user.UserTweets
+		user.UserTweets = append(user.UserTweets, tweet)
+		err = s.repo.UpdateUser(user)
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			user.UserTweets = tmp
+			return
+		}
 	}
 }
 
-func (s *Server) handleTweetsGet() http.HandlerFunc {
+func (s *Server) handleTweetsGet() http.HandlerFunc { //sort by datetime
 	return func(w http.ResponseWriter, r *http.Request) {
-
+		claims, status, err := s.isAuthorized(r)
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(status)
+			return
+		}
+		user, err := s.repo.GetUserByEmail(claims.UserEmail)
+		if err != nil {
+			s.logger.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		subscribtions := make([]model.Tweet, len(user.UserFollowing))
+		for _, v := range user.UserFollowing {
+			sub, err := s.repo.GetUserByEmail(v)
+			if err != nil {
+				s.logger.Error(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			for _, val := range sub.UserTweets {
+				subscribtions = append(subscribtions, val)
+			}
+		}
+		json.NewEncoder(w).Encode(subscribtions)
 	}
 }
 
@@ -173,7 +237,7 @@ func (s *Server) isAuthorized(r *http.Request) (*model.JWTClaims, int, error) {
 	tknStr := c.Value
 	claims := &model.JWTClaims{}
 	tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
-		return s.config.Jwt, nil
+		return []byte(s.config.Jwt), nil
 	})
 	if err != nil {
 		if err == jwt.ErrSignatureInvalid {
