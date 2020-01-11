@@ -2,6 +2,9 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/Muha113/golang-final-project/internal/app/model"
@@ -76,6 +79,11 @@ func (u *UsersRepositoryInMemory) getByEmail(email string) (model.User, error) {
 }
 
 func (u *UsersRepositoryInMemory) checkModelForValid(user model.User) error {
+	val1, _ := regexp.MatchString("^\\w+@\\w+\\.[a-z]+", user.UserEmail)
+	val2 := strings.ContainsRune(user.UserName, ' ')
+	if !val1 || val2 || user.UserPasswordHash == "" {
+		return fmt.Errorf("Error: %s\nJSON: %s", "bad input register json", user.ToString())
+	}
 	return nil
 }
 

@@ -1,9 +1,13 @@
 package server
 
 import (
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"log"
 	"net/http"
 
+	"github.com/Muha113/golang-final-project/internal/app/model"
 	"github.com/sirupsen/logrus"
 
 	"github.com/gorilla/mux"
@@ -32,7 +36,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) setRoutes() {
-	s.router.HandleFunc("/register", s.handleRegister()).Methods("GET")
+	s.router.HandleFunc("/register", s.handleRegister()).Methods("POST")
 }
 
 func (s *Server) setLogger() {
@@ -45,7 +49,16 @@ func (s *Server) setLogger() {
 
 func (s *Server) handleRegister() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s.logger.Info("my first log")
-		w.Write([]byte("HIIIIIIIIIIIIIII"))
+		w.Header().Set("Content-Type", "application/json")
+		var user model.User
+		err := json.NewDecoder(r.Body).Decode(&user)
+		if err != nil {
+			s.logger.Error(err)
+			return
+		}
+		hasher := md5.New()
+		hasher.Write([]byte(user.UserPasswordHash))
+		user.UserPasswordHash = hex.EncodeToString(hasher.Sum(nil))
+		//json.NewEncoder(w).Encode(user)
 	}
 }
