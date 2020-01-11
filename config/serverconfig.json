@@ -2,7 +2,7 @@
     "host": "localhost",
     "port": "8080",
     "logLevel": "debug",
-    "dbConnectionString": "",
-    "dbName": "",
-    "jwt": ""
+    "dbConnectionString": "mongodb://localhost:27017",
+    "dbName": "Users",
+    "jwt": "dadaya_key"
 }

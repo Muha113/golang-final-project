@@ -14,12 +14,15 @@ import (
 
 type UsersRepositoryInMemory struct {
 	sync.RWMutex
-	db *mongo.Database
+	db   *mongo.Database
+	size uint
 }
 
 func NewUsersRepositoryInMemory(database *mongo.Database) *UsersRepositoryInMemory {
+	ctn, _ := database.Collection("Users").CountDocuments(context.Background(), bson.D{})
 	return &UsersRepositoryInMemory{
-		db: database,
+		db:   database,
+		size: uint(ctn),
 	}
 }
 
@@ -27,24 +30,28 @@ func (u *UsersRepositoryInMemory) SaveUser(user model.User) error {
 	u.RLock()
 	err := u.checkModelForValid(user)
 	if err != nil {
+		u.RUnlock()
 		return err
 	}
 	collection := u.db.Collection("Users")
-	err = u.checkModelForExistence(user, collection)
-	if err != nil {
-		return err
+	if u.size != 0 {
+		err = u.checkUserModelForExistence(user)
+		if err != nil {
+			u.RUnlock()
+			return err
+		}
 	}
 	u.RUnlock()
 	u.Lock()
+	u.size++
+	user.ID = u.size
 	_, err = collection.InsertOne(context.TODO(), user)
 	if err != nil {
+		u.size--
+		u.Unlock()
 		return err
 	}
 	u.Unlock()
-	return nil
-}
-
-func (u *UsersRepositoryInMemory) SaveTweet(tweet model.Tweet) error {
 	return nil
 }
 
@@ -55,9 +62,8 @@ func (u *UsersRepositoryInMemory) UpdateUser(user model.User) error {
 		return err
 	}
 	collection := u.db.Collection("Users")
-	err = u.checkModelForExistence(user, collection)
-	if err != nil {
-		return err
+	if u.isExist(user) {
+		return fmt.Errorf("Error: %s", "user already exists")
 	}
 	u.RUnlock()
 	u.Lock()
@@ -69,24 +75,61 @@ func (u *UsersRepositoryInMemory) UpdateUser(user model.User) error {
 	return nil
 }
 
-func (u *UsersRepositoryInMemory) getByID(id uint) (model.User, error) {
+// func (u *UsersRepositoryInMemory) getByID(id uint) (model.User, error) {
+// 	collection := u.db.Collection("Users")
+// 	filter := bson.D{{Key: "id", Value: id}}
+// 	var res model.User
+// 	err := collection.FindOne(context.TODO(), filter).Decode(&res)
+// 	if err != nil {
+// 		return model.User{}, err
+// 	}
+// 	return res, nil
+// }
 
-	return model.User{}, nil
+func (u *UsersRepositoryInMemory) GetUserByEmail(email string) (model.User, error) {
+	collection := u.db.Collection("Users")
+	filter := bson.D{{Key: "email", Value: email}}
+	var res model.User
+	err := collection.FindOne(context.TODO(), filter).Decode(&res)
+	if err != nil {
+		return model.User{}, err
+	}
+	return res, nil
 }
 
-func (u *UsersRepositoryInMemory) getByEmail(email string) (model.User, error) {
-	return model.User{}, nil
+func (u *UsersRepositoryInMemory) isExist(user model.User) bool {
+	collection := u.db.Collection("Users")
+	filter := bson.D{{Key: "email", Value: user.UserEmail}}
+	var res model.User
+	err := collection.FindOne(context.TODO(), filter).Decode(&res)
+	if err != nil {
+		return false
+	}
+	return true
 }
 
 func (u *UsersRepositoryInMemory) checkModelForValid(user model.User) error {
 	val1, _ := regexp.MatchString("^\\w+@\\w+\\.[a-z]+", user.UserEmail)
 	val2 := strings.ContainsRune(user.UserName, ' ')
-	if !val1 || val2 || user.UserPasswordHash == "" {
-		return fmt.Errorf("Error: %s\nJSON: %s", "bad input register json", user.ToString())
+	val3 := user.UserPasswordHash == ""
+	if !val1 || val2 || val3 {
+		return fmt.Errorf("Error: %s", "bad input register json")
 	}
 	return nil
 }
 
-func (u *UsersRepositoryInMemory) checkModelForExistence(user model.User, coll *mongo.Collection) error {
+func (u *UsersRepositoryInMemory) checkUserModelForExistence(user model.User) error {
+	collection := u.db.Collection("Users")
+	var res model.User
+	filter := bson.D{{Key: "username", Value: user.UserName}}
+	err := collection.FindOne(context.TODO(), filter).Decode(&res)
+	if err == nil {
+		return fmt.Errorf("Error: %s", "duplicate username")
+	}
+	filter = bson.D{{Key: "email", Value: user.UserEmail}}
+	err = collection.FindOne(context.TODO(), filter).Decode(&res)
+	if err == nil {
+		return fmt.Errorf("Error %s", "duplicate email")
+	}
 	return nil
 }
