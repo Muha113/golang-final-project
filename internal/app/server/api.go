@@ -2,17 +2,10 @@ package server
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"time"
 
-	"github.com/Muha113/golang-final-project/internal/app/model"
 	"github.com/Muha113/golang-final-project/pkg/repository"
-	"github.com/dgrijalva/jwt-go"
 	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -20,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
+//Server : represents server functionality
 type Server struct {
 	config *Config
 	router *mux.Router
@@ -27,6 +21,7 @@ type Server struct {
 	logger *logrus.Logger
 }
 
+//NewServer : builds new server using configuration 'config'
 func NewServer(config *Config) *Server {
 	client, _ := mongo.Connect(context.TODO(), options.Client().ApplyURI(config.DbConnectionString))
 	return &Server{
@@ -37,6 +32,7 @@ func NewServer(config *Config) *Server {
 	}
 }
 
+//Start : sets routes and logger and starts listen and server
 func (s *Server) Start() error {
 	s.setRoutes()
 	s.setLogger()
@@ -58,201 +54,4 @@ func (s *Server) setLogger() {
 		log.Fatal(err)
 	}
 	s.logger.SetLevel(lvl)
-}
-
-func (s *Server) handleRegister() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var user model.User
-		err := json.NewDecoder(r.Body).Decode(&user)
-		if err != nil {
-			s.logger.Error(err)
-			return
-		}
-		user.UserPasswordHash = hashPasswd(user.UserPasswordHash)
-		err = s.repo.SaveUser(user)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(user)
-	}
-}
-
-func (s *Server) handleLogin() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var reqUser model.User
-		err := json.NewDecoder(r.Body).Decode(&reqUser)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		user, err := s.repo.GetUserByEmail(reqUser.UserEmail)
-		if err != nil || user.UserPasswordHash != hashPasswd(reqUser.UserPasswordHash) {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		expTime := time.Now().Add(5 * time.Minute)
-		claims := &model.JWTClaims{
-			UserEmail: user.UserEmail,
-			StandardClaims: jwt.StandardClaims{
-				ExpiresAt: expTime.Unix(),
-			},
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		tokenString, err := token.SignedString([]byte(s.config.Jwt))
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name:    "token",
-			Value:   tokenString,
-			Expires: expTime,
-		})
-	}
-}
-
-func (s *Server) handleSubscribe() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		claims, status, err := s.isAuthorized(r)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(status)
-			return
-		}
-		var reqUser model.User
-		err = json.NewDecoder(r.Body).Decode(&reqUser)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		user, err := s.repo.GetUserByEmail(claims.UserEmail)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		for _, v := range user.UserFollowing {
-			if v == reqUser.UserName {
-				s.logger.Error("Error: Duplicate following username")
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-		}
-		tmp := user.UserFollowing
-		user.UserFollowing = append(user.UserFollowing, reqUser.UserName)
-		fmt.Println("Following: ", user.UserFollowing)
-		err = s.repo.UpdateUser(user)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			user.UserFollowing = tmp
-			return
-		}
-	}
-}
-
-//TODO
-func (s *Server) handleTweetsPost() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		claims, status, err := s.isAuthorized(r)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(status)
-			return
-		}
-		var tweet model.Tweet
-		err = json.NewDecoder(r.Body).Decode(&tweet)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		user, err := s.repo.GetUserByEmail(claims.UserEmail)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		tweet.DateTime = time.Now()
-		tweet.ID = uint(len(user.UserTweets)) + 1
-		tweet.UserName = user.UserName
-		tmp := user.UserTweets
-		user.UserTweets = append(user.UserTweets, tweet)
-		err = s.repo.UpdateUser(user)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			user.UserTweets = tmp
-			return
-		}
-	}
-}
-
-func (s *Server) handleTweetsGet() http.HandlerFunc { //sort by datetime
-	return func(w http.ResponseWriter, r *http.Request) {
-		claims, status, err := s.isAuthorized(r)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(status)
-			return
-		}
-		user, err := s.repo.GetUserByEmail(claims.UserEmail)
-		if err != nil {
-			s.logger.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		subscribtions := make([]model.Tweet, len(user.UserFollowing))
-		for _, v := range user.UserFollowing {
-			sub, err := s.repo.GetUserByEmail(v)
-			if err != nil {
-				s.logger.Error(err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			for _, val := range sub.UserTweets {
-				subscribtions = append(subscribtions, val)
-			}
-		}
-		json.NewEncoder(w).Encode(subscribtions)
-	}
-}
-
-func (s *Server) isAuthorized(r *http.Request) (*model.JWTClaims, int, error) {
-	c, err := r.Cookie("token")
-	if err != nil {
-		if err == http.ErrNoCookie {
-			return nil, http.StatusUnauthorized, err
-		}
-		return nil, http.StatusBadRequest, err
-	}
-
-	tknStr := c.Value
-	claims := &model.JWTClaims{}
-	tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
-		return []byte(s.config.Jwt), nil
-	})
-	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
-			return nil, http.StatusUnauthorized, err
-		}
-		return nil, http.StatusBadRequest, err
-	}
-	if !tkn.Valid {
-		return nil, http.StatusUnauthorized, fmt.Errorf("Error: %s", "token is not valid")
-	}
-	return claims, http.StatusAccepted, nil
-}
-
-func hashPasswd(passwd string) string {
-	hasher := md5.New()
-	hasher.Write([]byte(passwd))
-	return hex.EncodeToString(hasher.Sum(nil))
 }
